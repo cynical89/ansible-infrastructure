@@ -1,0 +1,131 @@
+---
+  - hosts: all
+    remote_user: root
+    vars:
+      new_user: CHANGEME
+      user_pass: CHANGEME
+      nodejs_version: 8
+      github_username: CHANGEME
+      github_repo_name: CHANGEME
+      github_api_key: CHANGEME
+      sshd_config: /etc/ssh/sshd_config
+    tasks:
+      - name: Create a new user
+        user:
+          name: "{{ new_user }}"
+          password: "{{ user_pass | password_hash('sha512') }}"
+          groups: wheel
+          state: present
+          shell: /bin/bash
+          system: no
+          createhome: yes
+          home: "/home/{{ new_user }}"
+          generate_ssh_key: yes
+          ssh_key_bits: 4096
+          ssh_key_file: "/home/{{ new_user }}/.ssh/id_rsa"
+      - name: Add No Password Sudo for new user
+        shell: echo "{{ new_user }} ALL=(ALL) NOPASSWD:ALL" | tee -a /etc/sudoers
+      - name: Copy ssh keys to new user
+        shell: cp /root/.ssh/authorized_keys /home/"{{ new_user }}"/.ssh/authorized_keys
+      - name: Change keys permissions
+        shell: chown "{{ new_user }}":"{{ new_user }}" /home/"{{ new_user }}"/.ssh/authorized_keys warn=False
+      - name: Disable empty password login
+        lineinfile: dest={{ sshd_config }} regexp="^#?PermitEmptyPasswords" line="PermitEmptyPasswords no"
+      - name: Disable remote root login
+        lineinfile: dest={{ sshd_config }} regexp="^#?PermitRootLogin" line="PermitRootLogin no"
+      - name: Disable password login
+        lineinfile: dest={{ sshd_config }} regexp="^(#\s*)?PasswordAuthentication " line="PasswordAuthentication no"
+      - name: Restart SSHD
+        service: name=sshd state=restarted
+      - name: Add EPEL repository
+        yum_repository:
+          name: epel
+          description: EPEL YUM repo
+          baseurl: https://download.fedoraproject.org/pub/epel/$releasever/$basearch/
+          gpgcheck: no
+      - name: Add CouchDB Repository
+        yum_repository:
+          name: bintray--apache-couchdb-rpm
+          description: CouchDB Repository
+          baseurl: http://apache.bintray.com/couchdb-rpm/el$releasever/$basearch/
+          gpgcheck: no
+      - name: Add Nodejs repository
+        shell: "curl -sL https://rpm.nodesource.com/setup_{{ nodejs_version }}.x | bash - warn=False"
+      - name: Install Epel Release
+        yum:
+          name: epel-release
+      - name: Install CouchDB
+        yum:
+          name: couchdb
+      - name: Install Redis
+        yum:
+          name: redis
+      - name: Install node.js pre-requisites
+        yum:
+          name: [gcc-c++, make, git]
+      - name: Install Node.js
+        yum:
+          name: nodejs
+      - name: Start CouchDB
+        systemd: state=started name=couchdb
+      - name: Enable CouchDB on reboot
+        systemd:
+          name: couchdb
+          enabled: yes
+          masked: no
+      - name: Start Redis
+        systemd: state=started name=redis
+      - name: Enable Redis on reboot
+        systemd:
+          name: redis
+          enabled: yes
+          masked: no
+      - name: Check if a ssh key exists
+        become: yes
+        become_user: "{{ new_user }}"
+        stat: 
+          path: ~/.ssh/id_rsa
+        register: sshkey
+      - name: Generate SSH key.
+        become: yes
+        become_user: "{{ new_user }}"
+        shell: ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
+        when: sshkey.stat.exists == False
+      - name: Read SSH public key.
+        become: yes
+        become_user: "{{ new_user }}"
+        shell: cat ~/.ssh/id_rsa.pub
+        register: ssh_public_key
+      - name: "Add SSH key to {{ github_username }}/{{ github_repo_name }}."
+        uri:
+          url: "https://api.github.com/repos/{{ github_username }}/{{ github_repo_name }}/keys"
+          method: POST
+          status_code: 201
+          body:
+            read_only: true
+            key: "{{ ssh_public_key.stdout }}"
+          body_format: json
+          headers:
+            Content-Type: application/json
+            Authorization: "token {{ github_api_key }}"
+      - name: Create repository home folder
+        become: yes
+        become_user: "{{ new_user }}"
+        file: "path=~/www/{{ github_repo_name }} state=directory"
+      - name: Clone repository
+        become: yes
+        become_user: "{{ new_user }}"
+        git:
+          repo: "git@github.com:{{ github_username }}/{{ github_repo_name }}.git"
+          version: master
+          dest: "~/www/{{ github_repo_name }}"
+          accept_hostkey: yes
+      - name: Install npm dependencies
+        become: yes
+        become_user: "{{ new_user }}"
+        npm:
+          path: "~/www/{{ github_repo_name }}"
+      - name: Install PM2
+        npm: 
+          name: pm2
+          global: yes
