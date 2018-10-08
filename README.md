@@ -26,7 +26,7 @@ ssh-copy-id root@ip
 
 * Start it up.
 ```
-ansible-playbook -i <ip>, centos7-infra.yml 
+ansible-playbook -i ip, centos7-infra.yml 
 ```
 
 * Enjoy!
