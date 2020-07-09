@@ -49,6 +49,11 @@
           description: CouchDB Repository
           baseurl: http://apache.bintray.com/couchdb-rpm/el$releasever/$basearch/
           gpgcheck: no
+      - name: Add NGINX Repository
+        yum_repository:
+          name: nginx repo
+          baseurl: http://nginx.org/packages/centos/$releasever/$basearch/
+          gpgcheck: no
       - name: Add Nodejs repository
         shell: "curl -sL https://rpm.nodesource.com/setup_{{ nodejs_version }}.x | bash - warn=False"
       - name: Install Epel Release
@@ -60,6 +65,9 @@
       - name: Install Redis
         yum:
           name: redis
+      - name: Install NGNIX
+        yum:
+          name: nginx
       - name: Install node.js pre-requisites
         yum:
           name: [gcc-c++, make, git]
@@ -80,10 +88,26 @@
           name: redis
           enabled: yes
           masked: no
+      - name: Copy NGINX config to server
+        copy:
+          src: ../nginx/static_site.cfg
+          dest: /etc/nginx/sites-available/static_site.cfg
+      - name: create symlink
+        file:
+          src: /etc/nginx/sites-available/static_site.cfg
+          dest: /etc/nginx/sites-enabled/default
+          state: link
+      - name: Start NGINX
+        systemd: state=started name=nginx
+      - name: Enable NGINX on reboot
+        systemd:
+          name: nginx
+          enabled: yes
+          masked: no
       - name: Check if a ssh key exists
         become: yes
         become_user: "{{ new_user }}"
-        stat: 
+        stat:
           path: ~/.ssh/id_rsa
         register: sshkey
       - name: Generate SSH key.
@@ -126,6 +150,6 @@
         npm:
           path: "~/www/{{ github_repo_name }}"
       - name: Install PM2
-        npm: 
+        npm:
           name: pm2
           global: yes
